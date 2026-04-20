@@ -17,14 +17,14 @@ public class AppointmentService
     public async Task<List<AppointmentListDto>> GetAppointmentsAsync(string? status, string? patientLastName)
     {
         const string sql = """
-                           SELECT a.IdAppoinment,
+                           SELECT a.IdAppointment,
                            a.AppointmentDate,
                            a.Status,
                            a.Reason,
                            p.FirstName + N' ' + p.LastName AS PatientFullName,
                            p.Email AS PatientEmail
-                           FROM dbo.Appointment a
-                           JOIN dbo.Patient p ON p.PatientId = a.PatientId
+                           FROM dbo.Appointments a
+                           JOIN dbo.Patients p ON p.IdPatient = a.IdPatient
                            WHERE(@Status IS NULL OR a.Status = @Status)
                            AND (@PatientLastName IS NULL OR p.LastName = @PatientLastName)
                            ORDER BY a.AppointmentDate;
@@ -46,7 +46,7 @@ public class AppointmentService
         {
             result.Add(new AppointmentListDto
             {
-                IdAppointment = reader.GetInt32(reader.GetOrdinal("IdAppoinment")),
+                IdAppointment = reader.GetInt32(reader.GetOrdinal("IdAppointment")),
                 AppointmentDate = reader.GetDateTime(reader.GetOrdinal("AppointmentDate")),
                 Status = reader.GetString(reader.GetOrdinal("Status")),
                 Reason = reader.GetString(reader.GetOrdinal("Reason")),

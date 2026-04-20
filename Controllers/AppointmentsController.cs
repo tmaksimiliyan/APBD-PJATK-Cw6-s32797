@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace Cwiczenia6.Controllers;
 
 [ApiController]
-[Route("[api/controller]")]
+[Route("api/[controller]")]
 public class AppointmentsController : ControllerBase
 {
     private readonly AppointmentService _appointmentService;
