@@ -1,3 +1,4 @@
+using Cwiczenia6.DTOs;
 using Cwiczenia6.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -32,5 +33,31 @@ public class AppointmentsController : ControllerBase
         }
         
         return Ok(appointment);
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> CreateAppointment([FromBody] CreateAppointmentRequestDto request)
+    {
+        var appointment = await _appointmentService.CreateAppointmentAsync(request);
+        if (!appointment.Success)
+        {
+            if (appointment.StatusCode == 409)
+            {
+                return Conflict(new ErrorResponseDto
+                {
+                  Message = appointment.ErrorMessage! 
+                });
+            }
+            
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = appointment.ErrorMessage! 
+            });
+        }
+        
+        return CreatedAtAction(
+            nameof(GetAppointmentById),
+            new {idAppointment = appointment.NewAppointmentId},
+            new {IdAppointment = appointment.NewAppointmentId});
     }
 }
