@@ -58,4 +58,72 @@ public class AppointmentService
         return result;
         
     }
+
+    public async Task<AppointmentsDetailsDto?> GetAppointmentByIdAsync(int idAppointment)
+    {
+        const string sql = """
+                           SELECT
+                               a.IdAppointment,
+                               a.AppointmentDate,
+                               a.Status,
+                               a.Reason,
+                               a.InternalNotes,
+                               a.CreatedAt,
+
+                               p.IdPatient,
+                               p.FirstName AS PatientFirstName,
+                               p.LastName AS PatientLastName,
+                               p.Email AS PatientEmail,
+                               p.PhoneNumber AS PatientPhoneNumber,
+
+                               d.IdDoctor,
+                               d.FirstName AS DoctorFirstName,
+                               d.LastName AS DoctorLastName,
+                               d.LicenseNumber AS DoctorLicenseNumber,
+
+                               s.Name AS SpecializationName
+                           FROM dbo.Appointments a
+                           JOIN dbo.Patients p ON p.IdPatient = a.IdPatient
+                           JOIN dbo.Doctors d ON d.IdDoctor = a.IdDoctor
+                           JOIN dbo.Specializations s ON s.IdSpecialization = d.IdSpecialization
+                           WHERE a.IdAppointment = @IdAppointment;
+                           """;
+
+        await using var connection = new SqlConnection(_connectionString);
+        await using var command = new SqlCommand(sql, connection);
+
+        command.Parameters.Add("@IdAppointment", SqlDbType.Int).Value = idAppointment;
+
+        await connection.OpenAsync();
+        await using var reader = await command.ExecuteReaderAsync();
+
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        return new AppointmentsDetailsDto()
+        {
+            IdAppointment = reader.GetInt32(reader.GetOrdinal("IdAppointment")),
+            AppointmentDate = reader.GetDateTime(reader.GetOrdinal("AppointmentDate")),
+            Status = reader.GetString(reader.GetOrdinal("Status")),
+            Reason = reader.GetString(reader.GetOrdinal("Reason")),
+            InternalNotes = reader.IsDBNull(reader.GetOrdinal("InternalNotes"))
+                ? null
+                : reader.GetString(reader.GetOrdinal("InternalNotes")),
+            CreatedAt = reader.GetDateTime(reader.GetOrdinal("CreatedAt")),
+
+            IdPatient = reader.GetInt32(reader.GetOrdinal("IdPatient")),
+            PatientFirstName = reader.GetString(reader.GetOrdinal("PatientFirstName")),
+            PatientLastName = reader.GetString(reader.GetOrdinal("PatientLastName")),
+            PatientEmail = reader.GetString(reader.GetOrdinal("PatientEmail")),
+            PatientPhoneNumber = reader.GetString(reader.GetOrdinal("PatientPhoneNumber")),
+
+            IdDoctor = reader.GetInt32(reader.GetOrdinal("IdDoctor")),
+            DoctorFirstName = reader.GetString(reader.GetOrdinal("DoctorFirstName")),
+            DoctorLastName = reader.GetString(reader.GetOrdinal("DoctorLastName")),
+            DoctorLicenseNumber = reader.GetString(reader.GetOrdinal("DoctorLicenseNumber")),
+            SpecializationName = reader.GetString(reader.GetOrdinal("SpecializationName"))
+        };
+    }
 }
