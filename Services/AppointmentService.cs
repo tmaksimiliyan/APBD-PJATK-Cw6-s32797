@@ -159,22 +159,50 @@ public class AppointmentService
         return count > 0;
     }
 
-    private async Task<bool> DoctorHasAppointmentConflictAsync(SqlConnection connection, int idDoctor, DateTime appointmentDate)
+    private async Task<bool> DoctorHasAppointmentConflictAsync(SqlConnection connection, int idDoctor, DateTime appointmentDate, int? excludedAppointmentId = null)
     {
         const string sql = """
                            SELECT COUNT(1)
                            FROM dbo.Appointments
                            WHERE IdDoctor = @IdDoctor
                              AND AppointmentDate = @AppointmentDate
-                             AND Status = N'Scheduled';
+                             AND Status = N'Scheduled'
+                             AND (@ExcludedAppointmentId IS NULL OR IdAppointment <> @ExcludedAppointmentId);
                            """;
 
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.Add("@IdDoctor", SqlDbType.Int).Value = idDoctor;
         command.Parameters.Add("@AppointmentDate", SqlDbType.DateTime2).Value = appointmentDate;
-        
+        command.Parameters.Add("@ExcludedAppointmentId", SqlDbType.Int).Value =
+            excludedAppointmentId.HasValue ? excludedAppointmentId.Value : DBNull.Value;
+
         var count = (int)await command.ExecuteScalarAsync();
         return count > 0;
+    }
+    
+    private async Task<(bool Exists, string Status, DateTime AppointmentDate)> GetAppointmentStateAsync(SqlConnection connection, int idAppointment)
+    {
+        const string sql = """
+                           SELECT Status, AppointmentDate
+                           FROM dbo.Appointments
+                           WHERE IdAppointment = @IdAppointment;
+                           """;
+
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.Add("@IdAppointment", SqlDbType.Int).Value = idAppointment;
+
+        await using var reader = await command.ExecuteReaderAsync();
+
+        if (!await reader.ReadAsync())
+        {
+            return (false, string.Empty, default);
+        }
+
+        return (
+            true,
+            reader.GetString(reader.GetOrdinal("Status")),
+            reader.GetDateTime(reader.GetOrdinal("AppointmentDate"))
+        );
     }
     
     public async Task<(bool Success, string? ErrorMessage, int? NewAppointmentId, int StatusCode)> CreateAppointmentAsync(CreateAppointmentRequestDto request)
@@ -225,4 +253,88 @@ public class AppointmentService
 
         return (true, null, newId, 201);
     }
+
+   public async Task<(bool Success, string? ErrorMessage, int StatusCode)> UpdateAppointmentAsync(
+    int idAppointment,
+    UpdateAppointmentRequestDto request)
+{
+    var allowedStatuses = new[] { "Scheduled", "Completed", "Cancelled" };
+
+    if (string.IsNullOrWhiteSpace(request.Reason))
+    {
+        return (false, "Reason is required.", 400);
+    }
+
+    if (!allowedStatuses.Contains(request.Status))
+    {
+        return (false, "Status must be one of: Scheduled, Completed, Cancelled.", 400);
+    }
+
+    await using var connection = new SqlConnection(_connectionString);
+    await connection.OpenAsync();
+
+    var currentState = await GetAppointmentStateAsync(connection, idAppointment);
+
+    if (!currentState.Exists)
+    {
+        return (false, $"Appointment with id {idAppointment} was not found.", 404);
+    }
+
+    if (!await PatientExistsAndIsActiveAsync(connection, request.IdPatient))
+    {
+        return (false, "Patient does not exist or is inactive.", 400);
+    }
+
+    if (!await DoctorExistsAndIsActiveAsync(connection, request.IdDoctor))
+    {
+        return (false, "Doctor does not exist or is inactive.", 400);
+    }
+
+    var appointmentDateChanged = currentState.AppointmentDate != request.AppointmentDate;
+
+    if (currentState.Status == "Completed" && appointmentDateChanged)
+    {
+        return (false, "Cannot change appointment date for a completed appointment.", 409);
+    }
+
+    if (request.Status == "Scheduled")
+    {
+        var hasConflict = await DoctorHasAppointmentConflictAsync(
+            connection,
+            request.IdDoctor,
+            request.AppointmentDate,
+            idAppointment);
+
+        if (hasConflict)
+        {
+            return (false, "Doctor already has a scheduled appointment at this time.", 409);
+        }
+    }
+
+    const string sql = """
+        UPDATE dbo.Appointments
+        SET
+            IdPatient = @IdPatient,
+            IdDoctor = @IdDoctor,
+            AppointmentDate = @AppointmentDate,
+            Status = @Status,
+            Reason = @Reason,
+            InternalNotes = @InternalNotes
+        WHERE IdAppointment = @IdAppointment;
+        """;
+
+    await using var command = new SqlCommand(sql, connection);
+    command.Parameters.Add("@IdAppointment", SqlDbType.Int).Value = idAppointment;
+    command.Parameters.Add("@IdPatient", SqlDbType.Int).Value = request.IdPatient;
+    command.Parameters.Add("@IdDoctor", SqlDbType.Int).Value = request.IdDoctor;
+    command.Parameters.Add("@AppointmentDate", SqlDbType.DateTime2).Value = request.AppointmentDate;
+    command.Parameters.Add("@Status", SqlDbType.NVarChar, 30).Value = request.Status;
+    command.Parameters.Add("@Reason", SqlDbType.NVarChar, 250).Value = request.Reason;
+    command.Parameters.Add("@InternalNotes", SqlDbType.NVarChar, 500).Value =
+        string.IsNullOrWhiteSpace(request.InternalNotes) ? DBNull.Value : request.InternalNotes;
+
+    await command.ExecuteNonQueryAsync();
+
+    return (true, null, 200);
+}
 }

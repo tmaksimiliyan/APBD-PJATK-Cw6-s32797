@@ -60,4 +60,38 @@ public class AppointmentsController : ControllerBase
             new {idAppointment = appointment.NewAppointmentId},
             new {IdAppointment = appointment.NewAppointmentId});
     }
+
+    [HttpPut("{idAppointment:int}")]
+    public async Task<IActionResult> UpdateAppointment(int idAppointment,
+        [FromBody] UpdateAppointmentRequestDto request)
+    {
+        var appointment = await _appointmentService.UpdateAppointmentAsync(idAppointment, request);
+
+        if (!appointment.Success)
+        {
+            if (appointment.StatusCode == 404)
+            {
+                return NotFound(new ErrorResponseDto
+                {
+                    Message = appointment.ErrorMessage!
+                });
+            }
+            
+            if (appointment.StatusCode == 409)
+            {
+                return Conflict(new ErrorResponseDto
+                {
+                    Message = appointment.ErrorMessage! 
+                });
+            }
+            
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = appointment.ErrorMessage! 
+            });
+        }
+
+        var updatedAppointment = await _appointmentService.GetAppointmentByIdAsync(idAppointment);
+        return Ok(updatedAppointment);
+    }
 }
