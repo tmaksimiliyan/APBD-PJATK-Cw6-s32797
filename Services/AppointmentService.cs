@@ -254,87 +254,117 @@ public class AppointmentService
         return (true, null, newId, 201);
     }
 
-   public async Task<(bool Success, string? ErrorMessage, int StatusCode)> UpdateAppointmentAsync(
-    int idAppointment,
-    UpdateAppointmentRequestDto request)
-{
-    var allowedStatuses = new[] { "Scheduled", "Completed", "Cancelled" };
-
-    if (string.IsNullOrWhiteSpace(request.Reason))
+    public async Task<(bool Success, string? ErrorMessage, int StatusCode)> UpdateAppointmentAsync(int idAppointment,
+        UpdateAppointmentRequestDto request)
     {
-        return (false, "Reason is required.", 400);
-    }
+        var allowedStatuses = new[] { "Scheduled", "Completed", "Cancelled" };
 
-    if (!allowedStatuses.Contains(request.Status))
-    {
-        return (false, "Status must be one of: Scheduled, Completed, Cancelled.", 400);
-    }
-
-    await using var connection = new SqlConnection(_connectionString);
-    await connection.OpenAsync();
-
-    var currentState = await GetAppointmentStateAsync(connection, idAppointment);
-
-    if (!currentState.Exists)
-    {
-        return (false, $"Appointment with id {idAppointment} was not found.", 404);
-    }
-
-    if (!await PatientExistsAndIsActiveAsync(connection, request.IdPatient))
-    {
-        return (false, "Patient does not exist or is inactive.", 400);
-    }
-
-    if (!await DoctorExistsAndIsActiveAsync(connection, request.IdDoctor))
-    {
-        return (false, "Doctor does not exist or is inactive.", 400);
-    }
-
-    var appointmentDateChanged = currentState.AppointmentDate != request.AppointmentDate;
-
-    if (currentState.Status == "Completed" && appointmentDateChanged)
-    {
-        return (false, "Cannot change appointment date for a completed appointment.", 409);
-    }
-
-    if (request.Status == "Scheduled")
-    {
-        var hasConflict = await DoctorHasAppointmentConflictAsync(
-            connection,
-            request.IdDoctor,
-            request.AppointmentDate,
-            idAppointment);
-
-        if (hasConflict)
+        if (string.IsNullOrWhiteSpace(request.Reason))
         {
-            return (false, "Doctor already has a scheduled appointment at this time.", 409);
+            return (false, "Reason is required.", 400);
         }
+
+        if (!allowedStatuses.Contains(request.Status))
+        {
+            return (false, "Status must be one of: Scheduled, Completed, Cancelled.", 400);
+        }
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+
+        var currentState = await GetAppointmentStateAsync(connection, idAppointment);
+
+        if (!currentState.Exists)
+        {
+            return (false, $"Appointment with id {idAppointment} was not found.", 404);
+        }
+
+        if (!await PatientExistsAndIsActiveAsync(connection, request.IdPatient))
+        {
+            return (false, "Patient does not exist or is inactive.", 400);
+        }
+
+        if (!await DoctorExistsAndIsActiveAsync(connection, request.IdDoctor))
+        {
+            return (false, "Doctor does not exist or is inactive.", 400);
+        }
+
+        var appointmentDateChanged = currentState.AppointmentDate != request.AppointmentDate;
+
+        if (currentState.Status == "Completed" && appointmentDateChanged)
+        {
+            return (false, "Cannot change appointment date for a completed appointment.", 409);
+        }
+
+        if (request.Status == "Scheduled")
+        {
+            var hasConflict = await DoctorHasAppointmentConflictAsync(
+                connection,
+                request.IdDoctor,
+                request.AppointmentDate,
+                idAppointment);
+
+            if (hasConflict)
+            {
+                return (false, "Doctor already has a scheduled appointment at this time.", 409);
+            }
+        }
+
+        const string sql = """
+            UPDATE dbo.Appointments
+            SET
+                IdPatient = @IdPatient,
+                IdDoctor = @IdDoctor,
+                AppointmentDate = @AppointmentDate,
+                Status = @Status,
+                Reason = @Reason,
+                InternalNotes = @InternalNotes
+            WHERE IdAppointment = @IdAppointment;
+            """;
+
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.Add("@IdAppointment", SqlDbType.Int).Value = idAppointment;
+        command.Parameters.Add("@IdPatient", SqlDbType.Int).Value = request.IdPatient;
+        command.Parameters.Add("@IdDoctor", SqlDbType.Int).Value = request.IdDoctor;
+        command.Parameters.Add("@AppointmentDate", SqlDbType.DateTime2).Value = request.AppointmentDate;
+        command.Parameters.Add("@Status", SqlDbType.NVarChar, 30).Value = request.Status;
+        command.Parameters.Add("@Reason", SqlDbType.NVarChar, 250).Value = request.Reason;
+        command.Parameters.Add("@InternalNotes", SqlDbType.NVarChar, 500).Value =
+            string.IsNullOrWhiteSpace(request.InternalNotes) ? DBNull.Value : request.InternalNotes;
+
+        await command.ExecuteNonQueryAsync();
+
+        return (true, null, 200);
+    } 
+    
+    public async Task<(bool Success, string? ErrorMessage, int StatusCode)> DeleteAppointmentAsync(int idAppointment)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+
+        var currentState = await GetAppointmentStateAsync(connection, idAppointment);
+
+        if (!currentState.Exists)
+        {
+            return (false, $"Appointment with id {idAppointment} was not found.", 404);
+        }
+
+        if (currentState.Status == "Completed")
+        {
+            return (false, "Completed appointment cannot be deleted.", 409);
+        }
+
+        const string sql = """
+                           DELETE FROM dbo.Appointments
+                           WHERE IdAppointment = @IdAppointment;
+                           """;
+
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.Add("@IdAppointment", SqlDbType.Int).Value = idAppointment;
+
+        await command.ExecuteNonQueryAsync();
+
+        return (true, null, 204);
     }
-
-    const string sql = """
-        UPDATE dbo.Appointments
-        SET
-            IdPatient = @IdPatient,
-            IdDoctor = @IdDoctor,
-            AppointmentDate = @AppointmentDate,
-            Status = @Status,
-            Reason = @Reason,
-            InternalNotes = @InternalNotes
-        WHERE IdAppointment = @IdAppointment;
-        """;
-
-    await using var command = new SqlCommand(sql, connection);
-    command.Parameters.Add("@IdAppointment", SqlDbType.Int).Value = idAppointment;
-    command.Parameters.Add("@IdPatient", SqlDbType.Int).Value = request.IdPatient;
-    command.Parameters.Add("@IdDoctor", SqlDbType.Int).Value = request.IdDoctor;
-    command.Parameters.Add("@AppointmentDate", SqlDbType.DateTime2).Value = request.AppointmentDate;
-    command.Parameters.Add("@Status", SqlDbType.NVarChar, 30).Value = request.Status;
-    command.Parameters.Add("@Reason", SqlDbType.NVarChar, 250).Value = request.Reason;
-    command.Parameters.Add("@InternalNotes", SqlDbType.NVarChar, 500).Value =
-        string.IsNullOrWhiteSpace(request.InternalNotes) ? DBNull.Value : request.InternalNotes;
-
-    await command.ExecuteNonQueryAsync();
-
-    return (true, null, 200);
-}
+   
 }

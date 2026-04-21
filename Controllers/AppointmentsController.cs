@@ -94,4 +94,31 @@ public class AppointmentsController : ControllerBase
         var updatedAppointment = await _appointmentService.GetAppointmentByIdAsync(idAppointment);
         return Ok(updatedAppointment);
     }
+    
+    [HttpDelete("{idAppointment:int}")]
+    public async Task<IActionResult> DeleteAppointment(int idAppointment)
+    {
+        var result = await _appointmentService.DeleteAppointmentAsync(idAppointment);
+
+        if (!result.Success)
+        {
+            if (result.StatusCode == 404)
+            {
+                return NotFound(new ErrorResponseDto
+                {
+                    Message = result.ErrorMessage!
+                });
+            }
+
+            if (result.StatusCode == 409)
+            {
+                return Conflict(new ErrorResponseDto
+                {
+                    Message = result.ErrorMessage!
+                });
+            }
+        }
+
+        return NoContent();
+    }
 }
